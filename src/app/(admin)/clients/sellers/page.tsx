@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { Search, Download, Plus, MoreHorizontal, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
+import { Search, Download, Plus, MoreHorizontal, ChevronLeft, ChevronRight, AlertTriangle, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -11,40 +11,73 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
 
-const GRAPH_COLORS = ["var(--graph-2)", "var(--graph-5)", "var(--graph-11)", "var(--graph-3)", "var(--graph-9)", "var(--graph-8)", "var(--graph-6)"];
+const GRAPH_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-2)", "var(--chart-3)"];
 
-function BarChartLabeled({ data, avg, height = 180 }: { data: { label: string; value: number; aboveAvg: boolean }[]; avg: number; height?: number }) {
+function BarChartLabeled({ data, avg }: { data: { label: string; value: number; aboveAvg: boolean }[]; avg: number }) {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 520, PL = 30, PR = 12, PT = 28, PB = 36;
-  const iH = height - PT - PB;
-  const max = Math.max(...data.map(d => d.value), avg * 1.2) * 1.1;
-  const bw = (W - PL - PR) / data.length * 0.56;
-  const gap = (W - PL - PR) / data.length * 0.44;
-  const avgY = PT + iH - (avg / max) * iH;
+  const W = 760;
+  const leftLabel = 96;
+  const rightPad = 14;
+  const chartTop = 16;
+  const barH = 30;
+  const barGap = 10;
+  const H = chartTop + data.length * (barH + barGap) + 10;
+  const max = Math.max(...data.map(d => d.value), avg * 1.12);
+  const drawW = W - leftLabel - rightPad;
+  const hoverRow = hover != null ? data[hover] : null;
+  const hoverBarW = hoverRow ? (hoverRow.value / max) * drawW : 0;
+  const hoverX = Math.min(W - 180, leftLabel + hoverBarW + 12);
+  const hoverY = hover != null ? chartTop + hover * (barH + barGap) + barH / 2 - 20 : 0;
+
   return (
-    <svg viewBox={`0 0 ${W} ${height}`} style={{ width: "100%", display: "block" }}>
-      {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
-        <line key={i} x1={PL} x2={W - PR} y1={PT + f * iH} y2={PT + f * iH} stroke="var(--border)" strokeDasharray="3 3" opacity="0.4" />
-      ))}
-      {data.map((d, i) => {
-        const h = (d.value / max) * iH;
-        const x = PL + i * (bw + gap) + gap / 2;
-        const y = PT + iH - h;
-        return (
-          <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-            <rect x={x} y={y} width={bw} height={h} fill="var(--graph-2)" opacity={d.aboveAvg ? 1 : 0.42} rx="2" style={{ transition: "opacity .12s" }} />
-            <text x={x + bw / 2} y={y - 6} fontSize="10.5" textAnchor="middle" fill="var(--foreground)" fontFamily="var(--font-mono)" fontWeight="500">
-              {d.value > 1000 ? `$${(d.value / 1000).toFixed(0)}k` : d.value}
-            </text>
-            <text x={x + bw / 2} y={height - 18} fontSize="10.5" textAnchor="middle" fill="var(--muted-foreground)">{d.label}</text>
-          </g>
-        );
-      })}
-      <line x1={PL} x2={W - PR} y1={avgY} y2={avgY} stroke="var(--muted-foreground)" strokeDasharray="5 3" strokeWidth="1" />
-      <text x={W - PR - 4} y={avgY - 4} fontSize="10" textAnchor="end" fill="var(--muted-foreground)" fontFamily="var(--font-mono)">
-        Avg ${(avg / 1000).toFixed(0)}k
-      </text>
-    </svg>
+    <div>
+      <div className="mb-2">
+        <h4 className="text-[16px] font-semibold">Bar Chart - Mixed</h4>
+        <p className="text-[13px] text-muted-foreground mt-0.5">January - June 2024</p>
+      </div>
+      <div className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+          {data.map((d, i) => {
+            const y = chartTop + i * (barH + barGap);
+            const bw = (d.value / max) * drawW;
+            const fill = GRAPH_COLORS[i % GRAPH_COLORS.length];
+            return (
+              <g key={d.label} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                <text x={leftLabel - 12} y={y + barH / 2 + 5} textAnchor="end" fill="var(--muted-foreground)" fontSize="11.5" fontWeight="500">
+                  {d.label}
+                </text>
+                <rect
+                  x={leftLabel}
+                  y={y}
+                  width={bw}
+                  height={barH}
+                  rx="7"
+                  fill={fill}
+                  opacity={hover === i || hover == null ? 1 : 0.74}
+                  style={{ transition: "opacity .14s" }}
+                />
+              </g>
+            );
+          })}
+        </svg>
+        {hoverRow && (
+          <div
+            className="absolute z-10 px-2.5 py-1.5 rounded-md border border-border bg-card shadow-md flex items-center gap-2"
+            style={{ left: `${(hoverX / W) * 100}%`, top: `${(hoverY / H) * 100}%` }}
+          >
+            <span className="w-2.5 h-2.5 rounded-[3px]" style={{ background: GRAPH_COLORS[(hover ?? 0) % GRAPH_COLORS.length] }} />
+            <span className="text-[11.5px] text-muted-foreground">Visitors</span>
+            <span className="text-[11.5px] font-mono font-semibold text-foreground">{Math.round(hoverRow.value / 1000)}</span>
+          </div>
+        )}
+      </div>
+      <div className="mt-2.5">
+        <p className="text-[11.5px] font-semibold flex items-center gap-1">
+          Trending up by 5.2% this month <TrendingUp size={13} />
+        </p>
+        <p className="text-[11.5px] text-muted-foreground mt-0.5">Showing total visitors for the last 6 months</p>
+      </div>
+    </div>
   );
 }
 
@@ -177,9 +210,9 @@ export default function SellersPage() {
         </div>
 
         {/* Charts row */}
-        <div className="grid gap-4" style={{ gridTemplateColumns: "1.3fr 1fr" }}>
+        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-4">
           {/* Top Sellers by Revenue */}
-          <div className="bg-card border-l-[3px] border-l-primary border border-border rounded-lg overflow-hidden">
+          <div className="bg-card border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border">
               <h3 className="text-[13px] font-semibold">Top Sellers by Revenue</h3>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -218,7 +251,7 @@ export default function SellersPage() {
           </div>
 
           {/* Category Mix */}
-          <div className="bg-card border-l-[3px] border-l-amber-400 border border-border rounded-lg">
+          <div className="bg-card border border-border rounded-lg">
             <div className="px-4 py-3 border-b border-border">
               <h3 className="text-[13px] font-semibold">Category Mix</h3>
               <p className="text-[11.5px] text-muted-foreground">Revenue distribution across categories</p>
@@ -255,7 +288,7 @@ export default function SellersPage() {
 
         {/* Compliance alert */}
         {lowCompliance > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800" style={{ borderLeft: "3px solid oklch(0.68 0.17 60)" }}>
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800">
             <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
             <div className="flex-1 text-[12.5px]">
               <b>{lowCompliance} sellers</b> have compliance score below 60% — review recommended

@@ -57,7 +57,7 @@ export function Sidebar() {
       style={{ gridArea: "sidebar" }}
     >
       {/* Brand */}
-      <div className="flex items-center gap-2.5 px-4 border-b border-border font-semibold tracking-tight" style={{ height: "var(--topbar-h)" }}>
+      <div className="flex h-[52px] items-center gap-2.5 px-4 border-b border-border font-semibold tracking-tight">
         <div className="w-[22px] h-[22px] rounded-[5px] bg-primary grid place-items-center text-primary-foreground text-[11px] font-bold shadow-sm shrink-0">
           E
         </div>
