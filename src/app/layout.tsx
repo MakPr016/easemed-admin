@@ -33,6 +33,13 @@ export default function RootLayout({
       lang="en"
       className={cn("h-full antialiased", fontSans.variable, fontSerif.variable, fontMono.variable)}
     >
+      <head>
+        <script
+          async
+          crossOrigin="anonymous"
+          src="https://tweakcn.com/live-preview.min.js"
+        />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

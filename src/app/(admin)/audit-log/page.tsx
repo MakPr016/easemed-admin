@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Search, Download, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -86,9 +86,8 @@ export default function AuditLogPage() {
               </thead>
               <tbody>
                 {filtered.slice(0, 16).map(l => (
-                  <>
+                  <Fragment key={l.id}>
                     <tr
-                      key={l.id}
                       className="border-b border-border hover:bg-muted/30 cursor-pointer transition-colors"
                       onClick={() => setExpanded(expanded === l.id ? null : l.id)}
                     >
@@ -135,7 +134,7 @@ export default function AuditLogPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
