@@ -1,249 +1,286 @@
-"use client";
-import { useState, useMemo } from "react";
-import Link from "next/link";
-import { Search, Download, Plus, MoreHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/avatar";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { CLIENTS } from "@/lib/data";
-import { fmtMoney } from "@/lib/format";
-import { cn } from "@/lib/utils";
+"use client"
 
-const PAGE_SIZE = 12;
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Avatar } from '@/components/ui/avatar'
+import { StatusBadge, TypeBadge } from '@/components/ui/status-badge'
+import { loadHospitals, type AdminEntity } from '@/lib/admin-data'
+import { fmtDateShort } from '@/lib/format'
+import { Building2, Eye, Loader2, Search } from 'lucide-react'
 
-function TierCard({ label, sub, count, total, hue }: { label: string; sub: string; count: number; total: number; hue: string }) {
-  return (
-    <div className="bg-card border border-border rounded-lg p-3.5 cursor-pointer hover:border-border/80 transition-colors">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-[12.5px] font-semibold">{label}</div>
-          <div className="text-[11px] text-muted-foreground">{sub}</div>
-        </div>
-        <span className="w-1.5 h-9 rounded-full flex-shrink-0" style={{ background: hue }} />
-      </div>
-      <div className="text-[22px] font-semibold mt-2.5 tracking-tight tabular-nums">
-        {count}<span className="text-[12px] text-muted-foreground font-normal ml-1.5">buyers</span>
-      </div>
-      <div className="text-[11.5px] text-muted-foreground font-mono mt-0.5">{fmtMoney(total, true)} total</div>
-    </div>
-  );
+type VerificationStatus = 'pending' | 'verified' | 'rejected' | 'manual_override'
+type SortDirection = 'none' | 'asc' | 'desc'
+type HospitalSortKey =
+  | 'name'
+  | 'registrationNumber'
+  | 'contactEmail'
+  | 'country'
+  | 'city'
+  | 'verificationSource'
+  | 'verificationStatus'
+  | 'createdAt'
+
+function entityStatus(entity: AdminEntity): VerificationStatus {
+  const status = entity.verificationStatus ?? (entity.isVerified ? 'verified' : 'pending')
+  return status === 'pending' || status === 'verified' || status === 'rejected' || status === 'manual_override'
+    ? status
+    : 'pending'
 }
 
-function Stars({ value = 0 }: { value: number }) {
-  const full = Math.round(value);
-  return (
-    <span className="flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map(i => (
-        <svg key={i} viewBox="0 0 24 24" width="12" height="12" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" className={i <= full ? "fill-amber-400 stroke-amber-400" : "fill-none stroke-muted-foreground"} />
-        </svg>
-      ))}
-    </span>
-  );
+function getSearchText(entity: AdminEntity) {
+  return [
+    entity.name,
+    entity.id,
+    entity.registrationNumber ?? '',
+    entity.contactEmail ?? '',
+    entity.contactPerson ?? '',
+    entity.city ?? '',
+    entity.country ?? '',
+    entity.verificationSource ?? '',
+    entity.tags.join(' '),
+    entity.createdAt ? fmtDateShort(entity.createdAt) : '',
+  ].join(' ').toLowerCase()
 }
 
 export default function BuyersPage() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [industryFilter, setIndustryFilter] = useState("");
-  const [page, setPage] = useState(1);
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [entities, setEntities] = useState<AdminEntity[]>([])
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [countryFilter, setCountryFilter] = useState<string>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<HospitalSortKey | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>('none')
+  const [rowsPerPage, setRowsPerPage] = useState(50)
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const allBuyers = useMemo(() => CLIENTS.filter(c => c.type === "buyer"), []);
+  useEffect(() => {
+    let alive = true
 
-  const tiers = useMemo(() => ({
-    enterprise: allBuyers.filter(c => c.totalSpend >= 500000),
-    mid: allBuyers.filter(c => c.totalSpend >= 50000 && c.totalSpend < 500000),
-    smb: allBuyers.filter(c => c.totalSpend < 50000),
-  }), [allBuyers]);
+    loadHospitals()
+      .then(({ hospitals }) => {
+        if (alive) setEntities(hospitals)
+      })
+      .catch(() => {
+        if (alive) setEntities([])
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
 
-  const topBuyers = useMemo(() => [...allBuyers].sort((a, b) => b.totalSpend - a.totalSpend).slice(0, 5), [allBuyers]);
-  const deltas = [12.4, 8.0, 3.2, -2.1, 1.4];
+    return () => {
+      alive = false
+    }
+  }, [])
 
-  const rows = useMemo(() => {
-    return allBuyers.filter(c => {
-      if (statusFilter && c.status !== statusFilter) return false;
-      if (industryFilter && c.industry !== industryFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        return c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [allBuyers, search, statusFilter, industryFilter]);
+  const filteredEntities = entities.filter((entity) => {
+    if (statusFilter !== 'all' && entityStatus(entity) !== statusFilter) return false
+    if (countryFilter !== 'all' && (entity.country ?? '') !== countryFilter) return false
+    if (sourceFilter !== 'all' && (entity.verificationSource ?? '') !== sourceFilter) return false
+    if (search && !getSearchText(entity).includes(search.toLowerCase())) return false
+    return true
+  })
 
-  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const countries = [...new Set(entities.map((entity) => entity.country).filter(Boolean))] as string[]
+  const sources = [...new Set(entities.map((entity) => entity.verificationSource).filter(Boolean))] as string[]
 
-  const industries = [...new Set(allBuyers.map(c => c.industry))].sort();
+  const getSortValue = (entity: AdminEntity, key: HospitalSortKey): string => {
+    switch (key) {
+      case 'verificationStatus':
+        return entityStatus(entity)
+      case 'createdAt':
+        return entity.createdAt
+      case 'name':
+      case 'registrationNumber':
+      case 'contactEmail':
+      case 'country':
+      case 'city':
+      case 'verificationSource':
+        return String(entity[key] ?? '')
+      default:
+        return ''
+    }
+  }
+
+  const sortedEntities = [...filteredEntities].sort((a, b) => {
+    if (!sortKey || sortDirection === 'none') return 0
+
+    const av = getSortValue(a, sortKey)
+    const bv = getSortValue(b, sortKey)
+
+    if (sortKey === 'createdAt') {
+      const aTime = new Date(av).getTime()
+      const bTime = new Date(bv).getTime()
+      return sortDirection === 'asc' ? aTime - bTime : bTime - aTime
+    }
+
+    const cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' })
+    return sortDirection === 'asc' ? cmp : -cmp
+  })
+
+  const totalPages = Math.max(1, Math.ceil(sortedEntities.length / rowsPerPage))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const paginatedEntities = sortedEntities.slice((safeCurrentPage - 1) * rowsPerPage, safeCurrentPage * rowsPerPage)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [statusFilter, countryFilter, sourceFilter, search, sortKey, sortDirection, rowsPerPage])
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages)
+  }, [currentPage, totalPages])
+
+  const handleSortToggle = (key: HospitalSortKey) => {
+    if (sortKey !== key) {
+      setSortKey(key)
+      setSortDirection('asc')
+      return
+    }
+
+    if (sortDirection === 'asc') {
+      setSortDirection('desc')
+      return
+    }
+
+    setSortKey(null)
+    setSortDirection('none')
+  }
+
+  const handleViewDetails = (entity: AdminEntity) => {
+    router.push(`/clients/${entity.id}`)
+  }
+
+  const renderSortIndicator = (key: HospitalSortKey) => {
+    const active = sortKey === key
+    return (
+      <span className="inline-flex flex-col leading-[0.7] text-[9px]">
+        <span className={active && sortDirection === 'asc' ? 'text-[#1f3a61] dark:text-[#c5d5e4]' : 'text-[#7999b9] opacity-70'}>▴</span>
+        <span className={active && sortDirection === 'desc' ? 'text-[#1f3a61] dark:text-[#c5d5e4]' : 'text-[#7999b9] opacity-70'}>▾</span>
+      </span>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-75 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#7999b9]" />
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-border bg-card">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground mb-1">
-            <Link href="/dashboard" className="hover:text-foreground transition-colors">Dashboard</Link>
-            <span>/</span>
-            <Link href="/clients" className="hover:text-foreground transition-colors">Clients</Link>
-            <span>/</span>
-            <span className="text-foreground font-medium">Buyers</span>
-          </div>
-          <h1 className="text-[18px] font-semibold tracking-tight">Buyers</h1>
-          <p className="text-[12.5px] text-muted-foreground mt-0.5">
-            {allBuyers.length} buyers · {fmtMoney(allBuyers.reduce((s, c) => s + c.totalSpend, 0), true)} total spend
-          </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <div className="relative min-w-50 flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7999b9]" />
+          <input
+            type="text"
+            placeholder="Search hospitals..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-sm border border-[#d4dce8] bg-white py-2 pl-10 pr-4 text-sm text-[#1f3a61] placeholder:text-[#7999b9] focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]"
+          />
         </div>
-        <div className="flex items-center gap-2 pt-1">
-          <Button variant="outline" size="sm" className="gap-1.5"><Download size={13} />Export</Button>
-          <Button size="sm" className="gap-1.5"><Plus size={13} />Add Buyer</Button>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="verified">Verified</option>
+          <option value="rejected">Rejected</option>
+          <option value="manual_override">Manual Override</option>
+        </select>
+        <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Countries</option>
+          {countries.map((country) => <option key={country} value={country}>{country}</option>)}
+        </select>
+        <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Sources</option>
+          {sources.map((source) => <option key={source} value={source}>{source}</option>)}
+        </select>
+      </div>
+
+      <div className="dashboard-card overflow-hidden rounded-lg border border-[#d4dce8] bg-card dark:border-[#334a76]">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#d4dce8] bg-[#f4f7fb] dark:border-[#334a76] dark:bg-[#1a3050]">
+                <th className="w-16 px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]">S/N</th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('name')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Hospital Name</span>{renderSortIndicator('name')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('registrationNumber')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Registration No.</span>{renderSortIndicator('registrationNumber')}</button></th>
+                <th className="pl-4 pr-0 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('contactEmail')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Email</span>{renderSortIndicator('contactEmail')}</button></th>
+                <th className="pl-0 pr-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('country')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Country</span>{renderSortIndicator('country')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('city')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>City</span>{renderSortIndicator('city')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('verificationSource')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Source</span>{renderSortIndicator('verificationSource')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('verificationStatus')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Status</span>{renderSortIndicator('verificationStatus')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('createdAt')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Registered</span>{renderSortIndicator('createdAt')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedEntities.length === 0 ? (
+                <tr><td colSpan={10} className="py-8 text-center text-[#7999b9]">No hospitals found matching your filters.</td></tr>
+              ) : (
+                paginatedEntities.map((entity, index) => {
+                  const status = entityStatus(entity)
+                  return (
+                    <tr key={entity.id} className="border-b border-[#e8eef5] transition-colors hover:bg-[#f4f7fb] dark:border-[#2a3f5c] dark:hover:bg-[#1a3050]">
+                      <td className="px-4 py-3 font-medium text-[#7999b9]">{(safeCurrentPage - 1) * rowsPerPage + index + 1}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Avatar name={entity.name} size="sm" variant="hospital" />
+                          <div>
+                            <Link href={`/clients/${entity.id}`} className="font-medium text-[#1f3a61] transition-colors hover:text-primary dark:text-[#c5d5e4]">{entity.name}</Link>
+                            <div className="font-mono text-[10.5px] text-[#7999b9]">{entity.id}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-[#496c83] dark:text-[#8aaec9]">{entity.registrationNumber ?? '—'}</td>
+                      <td className="py-3 pl-4 pr-0 text-xs text-[#496c83] dark:text-[#8aaec9]">{entity.contactEmail ?? '—'}</td>
+                      <td className="py-3 pl-0 pr-4 text-[#496c83] dark:text-[#8aaec9]">{entity.country ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#496c83] dark:text-[#8aaec9]">{entity.city ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        {entity.verificationSource ? (
+                          <span className="rounded border border-[#d4dce8] px-2 py-1 text-xs capitalize text-[#496c83] dark:border-[#334a76] dark:text-[#8aaec9]">{entity.verificationSource}</span>
+                        ) : (
+                          <span className="text-xs text-[#7999b9]">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={status} />
+                      </td>
+                      <td className="px-4 py-3 text-xs text-[#7999b9]">{fmtDateShort(entity.createdAt)}</td>
+                      <td className="px-4 py-3">
+                        <Button variant="ghost" size="sm" onClick={() => handleViewDetails(entity)} className="text-[#496c83] hover:bg-[#f4f7fb] hover:text-[#1f3a61] dark:hover:bg-[#2a3f5c] dark:hover:text-[#c5d5e4]">
+                          <Eye className="mr-1 h-4 w-4" />
+                          View
+                        </Button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-4">
-        {/* Tier cards */}
-        <div className="grid grid-cols-3 gap-3">
-          <TierCard label="Enterprise" sub=">$500k spend" count={tiers.enterprise.length} total={tiers.enterprise.reduce((s, c) => s + c.totalSpend, 0)} hue="var(--primary)" />
-          <TierCard label="Mid-Market" sub="$50k–$500k" count={tiers.mid.length} total={tiers.mid.reduce((s, c) => s + c.totalSpend, 0)} hue="oklch(0.65 0.14 210)" />
-          <TierCard label="SMB" sub="<$50k" count={tiers.smb.length} total={tiers.smb.reduce((s, c) => s + c.totalSpend, 0)} hue="oklch(0.7 0.1 180)" />
-        </div>
-
-        {/* Top Buyers Leaderboard */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <div>
-              <h3 className="text-[13px] font-semibold">Top Buyers · This Month</h3>
-              <p className="text-[11.5px] text-muted-foreground">Ranked by spend, with change vs last month</p>
-            </div>
-            <Link href="/clients?type=buyer&sort=spend">
-              <Button variant="ghost" size="sm" className="gap-1 text-[12px]">View all <ChevronRight size={12} /></Button>
-            </Link>
-          </div>
-          <div className="buyers-leaderboard divide-y divide-border">
-            {topBuyers.map((c, i) => {
-              const delta = deltas[i];
-              const up = delta >= 0;
-              return (
-                <Link key={c.id} href={`/clients/${c.id}`} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/40 transition-colors">
-                  <span className="font-mono text-[11px] text-muted-foreground w-5 shrink-0">{String(i + 1).padStart(2, "0")}</span>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <Avatar name={c.name} size="sm" variant="buyer" />
-                    <div className="min-w-0">
-                      <div className="text-[12.5px] font-medium truncate">{c.name}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">{c.industry}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="font-mono text-[12.5px] font-medium">{fmtMoney(c.totalSpend, true)}</span>
-                    <span className={cn("font-mono text-[11.5px]", up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
-                      {up ? "↑" : "↓"} {Math.abs(delta).toFixed(1)}%
-                    </span>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border flex-wrap">
-            <div className="flex items-center gap-1.5 h-[30px] px-2.5 rounded border border-border bg-background flex-1 max-w-[280px]">
-              <Search size={13} className="text-muted-foreground shrink-0" />
-              <input
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1); }}
-                placeholder="Search buyers…"
-                className="flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="h-[30px] px-2.5 rounded border border-border bg-background text-[12.5px] focus:outline-none w-[140px]">
-              <option value="">All statuses</option>
-              <option value="active">Active</option>
-              <option value="pending">Pending</option>
-              <option value="suspended">Suspended</option>
-              <option value="inactive">Inactive</option>
-            </select>
-            <select value={industryFilter} onChange={e => { setIndustryFilter(e.target.value); setPage(1); }} className="h-[30px] px-2.5 rounded border border-border bg-background text-[12.5px] focus:outline-none w-[160px]">
-              <option value="">All industries</option>
-              {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
-            </select>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="border-b border-border bg-muted/40">
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Company</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Contact</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Country</th>
-                  <th className="px-3 py-2.5 text-right font-medium text-muted-foreground">Orders</th>
-                  <th className="px-3 py-2.5 text-right font-medium text-muted-foreground">Total Spend</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground w-44">Credit Utilization</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">KYC</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Status</th>
-                  <th className="w-10" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {pageRows.map(c => {
-                  const util = c.creditLimit ? c.currentBalance / c.creditLimit : 0;
-                  const over = util > 0.8;
-                  return (
-                    <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <Avatar name={c.name} size="sm" variant="buyer" />
-                          <div>
-                            <Link href={`/clients/${c.id}`} className="font-medium hover:text-primary transition-colors">{c.name}</Link>
-                            <div className="text-[11px] text-muted-foreground">{c.industry}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-muted-foreground max-w-[160px] truncate">{c.contact.name}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        <span className="font-mono text-[10.5px] mr-1.5">{c.countryCode}</span>{c.country}
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono">{c.orders}</td>
-                      <td className="px-3 py-2.5 text-right font-mono">{fmtMoney(c.totalSpend, true)}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className={cn("h-full rounded-full transition-all", over ? "bg-destructive" : "bg-primary")}
-                              style={{ width: `${Math.min(util * 100, 100)}%` }}
-                            />
-                          </div>
-                          <span className="font-mono text-[10.5px] text-muted-foreground w-8 text-right">{Math.round(util * 100)}%</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5"><StatusBadge status={c.kycStatus} /></td>
-                      <td className="px-3 py-2.5"><StatusBadge status={c.status} /></td>
-                      <td className="px-2 py-2.5">
-                        <button className="w-7 h-7 grid place-items-center rounded text-muted-foreground hover:bg-muted transition-colors">
-                          <MoreHorizontal size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex items-center justify-between px-4 py-2.5 border-t border-border text-[12px] text-muted-foreground">
-            <span>Showing <b className="text-foreground">{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, rows.length)}</b> of <b className="text-foreground">{rows.length}</b></span>
-            <div className="flex items-center gap-2">
-              <button className={cn("w-7 h-7 grid place-items-center rounded border border-border hover:bg-muted transition-colors", page === 1 && "opacity-40 pointer-events-none")} onClick={() => setPage(p => p - 1)}>
-                <ChevronLeft size={13} />
-              </button>
-              <span className="font-mono text-[11.5px]">{page} / {totalPages}</span>
-              <button className={cn("w-7 h-7 grid place-items-center rounded border border-border hover:bg-muted transition-colors", page >= totalPages && "opacity-40 pointer-events-none")} onClick={() => setPage(p => p + 1)}>
-                <ChevronRight size={13} />
-              </button>
-            </div>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-[#7999b9]">Showing {sortedEntities.length === 0 ? 0 : (safeCurrentPage - 1) * rowsPerPage + 1} {' '}-{' '} {Math.min(safeCurrentPage * rowsPerPage, sortedEntities.length)} of {sortedEntities.length}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[#7999b9]">Rows per page</span>
+          <select value={String(rowsPerPage)} onChange={(e) => setRowsPerPage(Number(e.target.value))} className="h-8 w-24 rounded border border-[#d4dce8] bg-white px-2 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage <= 1}>Previous</Button>
+          <span className="min-w-16 text-center text-xs text-[#7999b9]">Page {safeCurrentPage} / {totalPages}</span>
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage >= totalPages}>Next</Button>
         </div>
       </div>
     </div>
-  );
+  )
 }

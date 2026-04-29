@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import { CLIENTS } from "@/lib/data";
+import { loadHospitals, loadVendors, type AdminEntity } from "@/lib/admin-data";
 import { Avatar } from "@/components/ui/avatar";
 import { TypeBadge } from "@/components/ui/status-badge";
 import Link from "next/link";
@@ -19,9 +19,28 @@ interface CommandPaletteProps { open: boolean; onClose: () => void; }
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [q, setQ] = useState("");
+  const [entities, setEntities] = useState<AdminEntity[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 20); }, [open]);
+  useEffect(() => {
+    let alive = true;
+
+    Promise.all([loadHospitals(), loadVendors()])
+      .then(([hospitals, vendors]) => {
+        if (!alive) return;
+
+        setEntities([...hospitals.hospitals, ...vendors.vendors].slice(0, 24));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setEntities([]);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [open]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -31,12 +50,12 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   if (!open) return null;
 
   const pages = PAGES.filter(p => !q || p.label.toLowerCase().includes(q.toLowerCase()));
-  const clients = CLIENTS.filter(c => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.id.toLowerCase().includes(q.toLowerCase())).slice(0, 6);
+  const clients = entities.filter(c => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.id.toLowerCase().includes(q.toLowerCase())).slice(0, 6);
 
   return (
     <>
       <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 animate-in fade-in" onClick={onClose} />
-      <div className="fixed top-[22%] left-1/2 -translate-x-1/2 w-[540px] max-w-[calc(100vw-32px)] bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-98">
+      <div className="fixed top-[22%] left-1/2 -translate-x-1/2 w-135 max-w-[calc(100vw-32px)] bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-98">
         <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-border">
           <Search size={16} className="text-muted-foreground shrink-0" />
           <input
@@ -64,7 +83,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               <p className="px-2.5 py-1.5 text-[10.5px] text-muted-foreground uppercase tracking-wider mt-1">Clients</p>
               {clients.map(c => (
                 <Link key={c.id} href={`/clients/${c.id}`} className="flex items-center gap-2 px-2.5 py-1.5 rounded text-[12.5px] hover:bg-muted" onClick={onClose}>
-                  <Avatar name={c.name} size="sm" variant={c.type as "buyer" | "seller"} />
+                  <Avatar name={c.name} size="sm" variant={c.type} />
                   <span className="flex-1">{c.name}</span>
                   <span className="font-mono text-[10.5px] text-muted-foreground">{c.id}</span>
                   <TypeBadge type={c.type} />

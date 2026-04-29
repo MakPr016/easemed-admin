@@ -1,380 +1,307 @@
-"use client";
-import { useState, useMemo } from "react";
-import Link from "next/link";
-import { Search, Download, Plus, MoreHorizontal, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/avatar";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { CLIENTS } from "@/lib/data";
-import { fmtMoney } from "@/lib/format";
-import { cn } from "@/lib/utils";
+"use client"
 
-const PAGE_SIZE = 12;
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Search, Loader2, Eye, Store } from 'lucide-react'
 
-const GRAPH_COLORS = ["var(--graph-2)", "var(--graph-5)", "var(--graph-11)", "var(--graph-3)", "var(--graph-9)", "var(--graph-8)", "var(--graph-6)"];
+type VerificationStatus = 'pending' | 'verified' | 'rejected' | 'manual_override'
+type SortDirection = 'none' | 'asc' | 'desc'
+type VendorSortKey =
+  | 'vendor_name'
+  | 'company_registration'
+  | 'contact_email'
+  | 'country'
+  | 'city'
+  | 'verification_source'
+  | 'verification_status'
+  | 'created_at'
 
-function BarChartLabeled({ data, avg, height = 180 }: { data: { label: string; value: number; aboveAvg: boolean }[]; avg: number; height?: number }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const W = 520, PL = 30, PR = 12, PT = 28, PB = 36;
-  const iH = height - PT - PB;
-  const max = Math.max(...data.map(d => d.value), avg * 1.2) * 1.1;
-  const bw = (W - PL - PR) / data.length * 0.56;
-  const gap = (W - PL - PR) / data.length * 0.44;
-  const avgY = PT + iH - (avg / max) * iH;
-  return (
-    <svg viewBox={`0 0 ${W} ${height}`} style={{ width: "100%", display: "block" }}>
-      {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
-        <line key={i} x1={PL} x2={W - PR} y1={PT + f * iH} y2={PT + f * iH} stroke="var(--border)" strokeDasharray="3 3" opacity="0.4" />
-      ))}
-      {data.map((d, i) => {
-        const h = (d.value / max) * iH;
-        const x = PL + i * (bw + gap) + gap / 2;
-        const y = PT + iH - h;
-        return (
-          <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-            <rect x={x} y={y} width={bw} height={h} fill="var(--graph-2)" opacity={d.aboveAvg ? 1 : 0.42} rx="2" style={{ transition: "opacity .12s" }} />
-            <text x={x + bw / 2} y={y - 6} fontSize="10.5" textAnchor="middle" fill="var(--foreground)" fontFamily="var(--font-mono)" fontWeight="500">
-              {d.value > 1000 ? `$${(d.value / 1000).toFixed(0)}k` : d.value}
-            </text>
-            <text x={x + bw / 2} y={height - 18} fontSize="10.5" textAnchor="middle" fill="var(--muted-foreground)">{d.label}</text>
-          </g>
-        );
-      })}
-      <line x1={PL} x2={W - PR} y1={avgY} y2={avgY} stroke="var(--muted-foreground)" strokeDasharray="5 3" strokeWidth="1" />
-      <text x={W - PR - 4} y={avgY - 4} fontSize="10" textAnchor="end" fill="var(--muted-foreground)" fontFamily="var(--font-mono)">
-        Avg ${(avg / 1000).toFixed(0)}k
-      </text>
-    </svg>
-  );
+interface Vendor {
+  id: string
+  user_id?: string | null
+  vendor_name: string
+  company_registration: string | null
+  gst_number: string | null
+  vat_id: string | null
+  country: string | null
+  city: string | null
+  contact_email: string | null
+  contact_phone: string | null
+  contact_person: string | null
+  vendor_type: string[] | null
+  created_at: string
+  verification_status: VerificationStatus | null
+  verification_source: string | null
 }
 
-function DonutChartBare({ data, size = 160 }: { data: { value: number; color: string }[]; size?: number }) {
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
-  const R = size / 2 - 2;
-  const cx = size / 2, cy = size / 2;
-  let a0 = -Math.PI / 2;
+const statusLabels: Record<VerificationStatus, string> = {
+  pending: 'Pending',
+  verified: 'Verified',
+  rejected: 'Rejected',
+  manual_override: 'Manual Override',
+}
+
+function getStatus(vendor: Vendor): VerificationStatus {
+  return vendor.verification_status ?? 'pending'
+}
+
+export function VendorVerificationTable() {
+  const router = useRouter()
+  const [vendors, setVendors] = useState<Vendor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [countryFilter, setCountryFilter] = useState<string>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortKey, setSortKey] = useState<VendorSortKey | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>('none')
+  const [rowsPerPage, setRowsPerPage] = useState(50)
+  const [currentPage, setCurrentPage] = useState(1)
+
+  useEffect(() => {
+    const fetchVendors = async () => {
+      try {
+        const response = await fetch('/api/admin/vendors', { cache: 'no-store' })
+        const payload = await response.json()
+        if (!response.ok) throw new Error(payload.error || 'Failed to load vendors')
+        setVendors((payload.vendors ?? []) as Vendor[])
+      } catch (error) {
+        console.error('Error fetching vendors:', error)
+        setVendors([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchVendors()
+  }, [])
+
+  const filteredVendors = vendors.filter((vendor) => {
+    const status = getStatus(vendor)
+    const registeredDate = new Date(vendor.created_at).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+    const searchable = [
+      vendor.vendor_name,
+      vendor.company_registration,
+      vendor.contact_email,
+      vendor.country,
+      vendor.city,
+      vendor.verification_source,
+      status,
+      registeredDate,
+    ].filter(Boolean).join(' ').toLowerCase()
+
+    if (statusFilter !== 'all' && status !== statusFilter) return false
+    if (countryFilter !== 'all' && vendor.country !== countryFilter) return false
+    if (sourceFilter !== 'all' && vendor.verification_source !== sourceFilter) return false
+    if (searchQuery && !searchable.includes(searchQuery.toLowerCase())) return false
+    return true
+  })
+
+  const countries = [...new Set(vendors.map((vendor) => vendor.country).filter(Boolean))] as string[]
+  const sources = [...new Set(vendors.map((vendor) => vendor.verification_source).filter(Boolean))] as string[]
+
+  const getSortValue = (vendor: Vendor, key: VendorSortKey): string => {
+    switch (key) {
+      case 'verification_status': return getStatus(vendor)
+      case 'created_at': return vendor.created_at
+      case 'vendor_name':
+      case 'company_registration':
+      case 'contact_email':
+      case 'country':
+      case 'city':
+      case 'verification_source': return String(vendor[key] ?? '')
+      default: return ''
+    }
+  }
+
+  const sortedVendors = [...filteredVendors].sort((a, b) => {
+    if (!sortKey || sortDirection === 'none') return 0
+    const av = getSortValue(a, sortKey)
+    const bv = getSortValue(b, sortKey)
+    if (sortKey === 'created_at') {
+      const aTime = new Date(av).getTime()
+      const bTime = new Date(bv).getTime()
+      return sortDirection === 'asc' ? aTime - bTime : bTime - aTime
+    }
+    const cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' })
+    return sortDirection === 'asc' ? cmp : -cmp
+  })
+
+  const totalPages = Math.max(1, Math.ceil(sortedVendors.length / rowsPerPage))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const paginatedVendors = sortedVendors.slice((safeCurrentPage - 1) * rowsPerPage, safeCurrentPage * rowsPerPage)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [statusFilter, countryFilter, sourceFilter, searchQuery, sortKey, sortDirection, rowsPerPage])
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages)
+  }, [currentPage, totalPages])
+
+  const handleSortToggle = (key: VendorSortKey) => {
+    if (sortKey !== key) {
+      setSortKey(key)
+      setSortDirection('asc')
+      return
+    }
+    if (sortDirection === 'asc') {
+      setSortDirection('desc')
+      return
+    }
+    setSortKey(null)
+    setSortDirection('none')
+  }
+
+  const handleViewDetails = (vendor: Vendor) => {
+    router.push(`/clients/${vendor.id}`)
+  }
+
+  const sortIndicator = (key: VendorSortKey) => {
+    const active = sortKey === key
+    return (
+      <span className="inline-flex flex-col leading-[0.7] text-[9px]">
+        <span className={active && sortDirection === 'asc' ? 'text-[#1f3a61] dark:text-[#c5d5e4]' : 'text-[#7999b9] opacity-70'}>▴</span>
+        <span className={active && sortDirection === 'desc' ? 'text-[#1f3a61] dark:text-[#c5d5e4]' : 'text-[#7999b9] opacity-70'}>▾</span>
+      </span>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-75 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#7999b9]" />
+      </div>
+    )
+  }
+
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size }}>
-      {data.map((d, i) => {
-        const a1 = a0 + (d.value / total) * Math.PI * 2;
-        const large = (a1 - a0) > Math.PI ? 1 : 0;
-        const x0 = cx + Math.cos(a0) * R, y0 = cy + Math.sin(a0) * R;
-        const x1 = cx + Math.cos(a1) * R, y1 = cy + Math.sin(a1) * R;
-        const rInner = R * 0.66;
-        const x0i = cx + Math.cos(a1) * rInner, y0i = cy + Math.sin(a1) * rInner;
-        const x1i = cx + Math.cos(a0) * rInner, y1i = cy + Math.sin(a0) * rInner;
-        const path = `M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1} L ${x0i} ${y0i} A ${rInner} ${rInner} 0 ${large} 0 ${x1i} ${y1i} Z`;
-        const el = (
-          <path key={i} d={path} fill={d.color}
-            style={{ transition: "opacity .12s" }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = "0.85")}
-            onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <div className="relative min-w-50 flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7999b9]" />
+          <input
+            type="text"
+            placeholder="Search vendors..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-sm border border-[#d4dce8] bg-white py-2 pl-10 pr-4 text-sm text-[#1f3a61] placeholder:text-[#7999b9] focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]"
           />
-        );
-        a0 = a1;
-        return el;
-      })}
-    </svg>
-  );
-}
-
-function Stars({ value = 0 }: { value: number }) {
-  const full = Math.round(value);
-  return (
-    <span className="flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map(i => (
-        <svg key={i} viewBox="0 0 24 24" width="12" height="12" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"
-            className={i <= full ? "fill-amber-400 stroke-amber-400" : "fill-none stroke-muted-foreground"} />
-        </svg>
-      ))}
-    </span>
-  );
-}
-
-export default function SellersPage() {
-  const [tab, setTab] = useState<"all" | "new">("all");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-
-  const allSellers = useMemo(() => CLIENTS.filter(c => c.type === "seller"), []);
-  const pendingSellers = useMemo(() => allSellers.filter(c => c.status === "pending" || c.kycStatus === "not_submitted"), [allSellers]);
-
-  const totalRev = useMemo(() => allSellers.reduce((s, c) => s + c.revenue, 0), [allSellers]);
-  const avgRev = totalRev / Math.max(allSellers.length, 1);
-  const lowCompliance = allSellers.filter(c => c.compliance && c.compliance < 60).length;
-
-  const topFive = useMemo(() => [...allSellers].sort((a, b) => b.revenue - a.revenue).slice(0, 5), [allSellers]);
-  const topEarner = topFive[0];
-  const mostOrders = useMemo(() => [...allSellers].sort((a, b) => b.orders - a.orders)[0], [allSellers]);
-  const fastest = useMemo(() => [...allSellers].sort((a, b) => (b.rating || 0) - (a.rating || 0))[1] || topFive[1], [allSellers, topFive]);
-
-  const catCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    allSellers.forEach(c => c.categories.forEach(cat => { counts[cat] = (counts[cat] || 0) + 1; }));
-    return counts;
-  }, [allSellers]);
-
-  const catList = useMemo(() => {
-    const catRev: Record<string, number> = {};
-    allSellers.forEach(c => c.categories.forEach(cat => { catRev[cat] = (catRev[cat] || 0) + c.revenue / Math.max(c.categories.length, 1); }));
-    return Object.entries(catRev)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, rev], i) => ({ name, value: catCounts[name] || 0, revenue: rev, color: GRAPH_COLORS[i % 7] }));
-  }, [allSellers, catCounts]);
-
-  const catTotal = catList.reduce((s, c) => s + c.revenue, 0);
-  const topCat = catList[0]?.name || "—";
-
-  const baseRows = tab === "all" ? allSellers : pendingSellers;
-  const rows = useMemo(() => {
-    if (!search) return baseRows;
-    const q = search.toLowerCase();
-    return baseRows.filter(c => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
-  }, [baseRows, search]);
-
-  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-border bg-card">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground mb-1">
-            <Link href="/dashboard" className="hover:text-foreground transition-colors">Dashboard</Link>
-            <span>/</span>
-            <Link href="/clients" className="hover:text-foreground transition-colors">Clients</Link>
-            <span>/</span>
-            <span className="text-foreground font-medium">Sellers</span>
-          </div>
-          <h1 className="text-[18px] font-semibold tracking-tight">Sellers</h1>
-          <p className="text-[12.5px] text-muted-foreground mt-0.5">
-            {allSellers.length} sellers · {fmtMoney(totalRev, true)} total revenue
-          </p>
         </div>
-        <div className="flex items-center gap-2 pt-1">
-          <Button variant="outline" size="sm" className="gap-1.5"><Download size={13} />Export</Button>
-          <Button size="sm" className="gap-1.5"><Plus size={13} />Add Seller</Button>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="verified">Verified</option>
+          <option value="rejected">Rejected</option>
+          <option value="manual_override">Manual Override</option>
+        </select>
+        <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Countries</option>
+          {countries.map((country) => <option key={country} value={country}>{country}</option>)}
+        </select>
+        <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="h-9 w-40 rounded border border-[#d4dce8] bg-white px-3 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+          <option value="all">All Sources</option>
+          {sources.map((source) => <option key={source} value={source}>{source}</option>)}
+        </select>
+      </div>
+
+      <div className="dashboard-card overflow-hidden rounded-lg border border-[#d4dce8] bg-card dark:border-[#334a76]">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#d4dce8] bg-[#f4f7fb] dark:border-[#334a76] dark:bg-[#1a3050]">
+                <th className="w-16 px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]">S/N</th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('vendor_name')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Vendor Name</span>{sortIndicator('vendor_name')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('company_registration')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Company Reg.</span>{sortIndicator('company_registration')}</button></th>
+                <th className="pl-4 pr-0 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('contact_email')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Email</span>{sortIndicator('contact_email')}</button></th>
+                <th className="pl-0 pr-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('country')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Country</span>{sortIndicator('country')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('city')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>City</span>{sortIndicator('city')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('verification_source')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Source</span>{sortIndicator('verification_source')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('verification_status')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Status</span>{sortIndicator('verification_status')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]"><button type="button" onClick={() => handleSortToggle('created_at')} className="inline-flex items-center gap-1 hover:text-[#496c83] dark:hover:text-[#d9e4ef]"><span>Registered</span>{sortIndicator('created_at')}</button></th>
+                <th className="px-4 py-3 text-left font-semibold text-[#1f3a61] dark:text-[#c5d5e4]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedVendors.length === 0 ? (
+                <tr><td colSpan={10} className="py-8 text-center text-[#7999b9]">No vendors found matching your filters.</td></tr>
+              ) : (
+                paginatedVendors.map((vendor, index) => {
+                  const status = getStatus(vendor)
+                  return (
+                    <tr key={vendor.id} className="border-b border-[#e8eef5] transition-colors hover:bg-[#f4f7fb] dark:border-[#2a3f5c] dark:hover:bg-[#1a3050]">
+                      <td className="px-4 py-3 font-medium text-[#7999b9]">{(safeCurrentPage - 1) * rowsPerPage + index + 1}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#eaf0f7] text-[#496c83] dark:bg-[#223a5b] dark:text-[#c5d5e4]"><Store className="h-4 w-4" /></div>
+                          <div>
+                            <div className="font-medium text-[#1f3a61] dark:text-[#c5d5e4]">{vendor.vendor_name}</div>
+                            <div className="font-mono text-[10.5px] text-[#7999b9]">{vendor.id}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-[#496c83] dark:text-[#8aaec9]">{vendor.company_registration ?? '—'}</td>
+                      <td className="py-3 pl-4 pr-0 text-xs text-[#496c83] dark:text-[#8aaec9]">{vendor.contact_email ?? '—'}</td>
+                      <td className="py-3 pl-0 pr-4 text-[#496c83] dark:text-[#8aaec9]">{vendor.country ?? '—'}</td>
+                      <td className="px-4 py-3 text-[#496c83] dark:text-[#8aaec9]">{vendor.city ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        {vendor.verification_source ? (
+                          <span className="rounded border border-[#d4dce8] px-2 py-1 text-xs capitalize text-[#496c83] dark:border-[#334a76] dark:text-[#8aaec9]">{vendor.verification_source}</span>
+                        ) : (
+                          <span className="text-xs text-[#7999b9]">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                          status === 'pending'
+                            ? 'border-amber-300 bg-amber-100 text-amber-700'
+                            : status === 'verified'
+                            ? 'border-green-300 bg-green-100 text-green-700'
+                            : status === 'rejected'
+                            ? 'border-red-300 bg-red-100 text-red-700'
+                            : 'border-blue-300 bg-blue-100 text-blue-700'
+                        }`}>
+                          {statusLabels[status]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-[#7999b9]">{new Date(vendor.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                      <td className="px-4 py-3">
+                        <Button variant="ghost" size="sm" onClick={() => handleViewDetails(vendor)} className="text-[#496c83] hover:bg-[#f4f7fb] hover:text-[#1f3a61] dark:hover:bg-[#2a3f5c] dark:hover:text-[#c5d5e4]">
+                          <Eye className="mr-1 h-4 w-4" />
+                          View
+                        </Button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-4">
-        {/* Tabs */}
-        <div className="flex gap-1 border-b border-border">
-          {[{ id: "all", label: "All Sellers", count: allSellers.length }, { id: "new", label: "New Applications", count: pendingSellers.length }].map(t => (
-            <button
-              key={t.id}
-              onClick={() => { setTab(t.id as "all" | "new"); setPage(1); }}
-              className={cn("px-4 py-2.5 text-[12.5px] font-medium border-b-2 -mb-px transition-colors flex items-center gap-2", tab === t.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
-            >
-              {t.label}
-              <span className={cn("text-[10.5px] px-1.5 py-px rounded-full font-mono", tab === t.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
-                {t.count}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Charts row */}
-        <div className="grid gap-4" style={{ gridTemplateColumns: "1.3fr 1fr" }}>
-          {/* Top Sellers by Revenue */}
-          <div className="bg-card border-l-[3px] border-l-primary border border-border rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="text-[13px] font-semibold">Top Sellers by Revenue</h3>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {[
-                  ["Total", fmtMoney(totalRev, true)],
-                  ["vs last", "↑ 8.4%"],
-                  ["Avg/seller", fmtMoney(avgRev, true)],
-                  ["Top category", topCat],
-                ].map(([k, v]) => (
-                  <span key={k} className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-muted text-[11px]">
-                    <span className="text-muted-foreground">{k}</span>
-                    <span className={cn("font-medium", k === "vs last" ? "text-emerald-600 dark:text-emerald-400 font-mono" : "font-mono")}>{v}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="px-4 pt-3 pb-1">
-              <BarChartLabeled
-                data={topFive.map(c => ({ label: c.name.length > 12 ? c.name.slice(0, 11) + "…" : c.name, value: c.revenue, aboveAvg: c.revenue >= avgRev }))}
-                avg={avgRev}
-              />
-            </div>
-            <div className="grid border-t border-border" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-              {[
-                ["Top earner", topEarner?.name || "—", fmtMoney(topEarner?.revenue || 0, true)],
-                ["Most orders", mostOrders?.name || "—", `${mostOrders?.orders || 0} orders`],
-                ["Fastest growing", fastest?.name || "—", "+24.3%"],
-              ].map(([k, n, v], i) => (
-                <div key={i} className={cn("px-4 py-3", i > 0 && "border-l border-border")}>
-                  <div className="text-[10.5px] uppercase tracking-widest text-muted-foreground font-medium">{k}</div>
-                  <div className="text-[12.5px] font-medium mt-1 truncate">{n}</div>
-                  <div className="text-[11.5px] text-muted-foreground font-mono mt-0.5">{v}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Category Mix */}
-          <div className="bg-card border-l-[3px] border-l-amber-400 border border-border rounded-lg">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="text-[13px] font-semibold">Category Mix</h3>
-              <p className="text-[11.5px] text-muted-foreground">Revenue distribution across categories</p>
-            </div>
-            <div className="p-4 grid gap-4" style={{ gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
-              <div className="relative" style={{ width: 160, height: 160 }}>
-                <DonutChartBare data={catList} size={160} />
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-0.5">
-                  <div className="text-[20px] font-semibold tracking-tight">{allSellers.length}</div>
-                  <div className="text-[10.5px] uppercase tracking-widest text-muted-foreground">Sellers</div>
-                  <div className="font-mono text-[12px] font-medium mt-1">{fmtMoney(totalRev, true)}</div>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                {catList.slice(0, 6).map(c => (
-                  <div key={c.name} className="grid gap-2 items-center text-[12px]" style={{ gridTemplateColumns: "auto 1fr auto" }}>
-                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: c.color }} />
-                    <div className="min-w-0">
-                      <div className="flex items-center justify-between gap-1.5 mb-0.5">
-                        <span className="truncate">{c.name}</span>
-                        <span className="text-[10px] text-muted-foreground shrink-0 bg-muted px-1 rounded">{c.value}</span>
-                      </div>
-                      <div className="h-1 rounded-full bg-muted overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${(c.revenue / catTotal) * 100}%`, background: c.color }} />
-                      </div>
-                    </div>
-                    <span className="font-mono text-[11px] font-medium min-w-14 text-right">{fmtMoney(c.revenue, true)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Compliance alert */}
-        {lowCompliance > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800" style={{ borderLeft: "3px solid oklch(0.68 0.17 60)" }}>
-            <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
-            <div className="flex-1 text-[12.5px]">
-              <b>{lowCompliance} sellers</b> have compliance score below 60% — review recommended
-            </div>
-            <Button size="sm" variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-100 dark:text-amber-400 dark:border-amber-700 text-[12px]" onClick={() => setTab("all")}>
-              Review all
-            </Button>
-          </div>
-        )}
-
-        {/* Table */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
-            <div className="flex items-center gap-1.5 h-[30px] px-2.5 rounded border border-border bg-background flex-1 max-w-[280px]">
-              <Search size={13} className="text-muted-foreground shrink-0" />
-              <input
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1); }}
-                placeholder="Search sellers…"
-                className="flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <select className="h-[30px] px-2.5 rounded border border-border bg-background text-[12.5px] focus:outline-none w-[160px]">
-              <option>All categories</option>
-              {catList.map(c => <option key={c.name}>{c.name}</option>)}
-            </select>
-            <select className="h-[30px] px-2.5 rounded border border-border bg-background text-[12.5px] focus:outline-none w-[160px]">
-              <option>All compliance</option>
-              <option>High (≥80%)</option>
-              <option>Medium (60–79%)</option>
-              <option>Low (&lt;60%)</option>
-            </select>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="border-b border-border bg-muted/40">
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Company</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Country</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Categories</th>
-                  <th className="px-3 py-2.5 text-right font-medium text-muted-foreground">Orders</th>
-                  <th className="px-3 py-2.5 text-right font-medium text-muted-foreground">Revenue</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Rating</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Compliance</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-muted-foreground">Status</th>
-                  <th className="w-10" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {pageRows.map(c => {
-                  const comp = c.compliance || 0;
-                  const cv = comp > 80 ? "text-emerald-600 dark:text-emerald-400" : comp > 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-                  return (
-                    <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <Avatar name={c.name} size="sm" variant="seller" />
-                          <div>
-                            <Link href={`/clients/${c.id}`} className="font-medium hover:text-primary transition-colors">{c.name}</Link>
-                            <div className="text-[11px] text-muted-foreground">{c.contact.name}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        <span className="font-mono text-[10.5px] mr-1.5">{c.countryCode}</span>{c.country}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex flex-wrap gap-1">
-                          {c.categories.slice(0, 2).map(cat => (
-                            <span key={cat} className="px-1.5 py-0.5 rounded bg-muted text-[10.5px]">{cat}</span>
-                          ))}
-                          {c.categories.length > 2 && (
-                            <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10.5px]">+{c.categories.length - 2}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono">{c.orders}</td>
-                      <td className="px-3 py-2.5 text-right font-mono">{fmtMoney(c.revenue, true)}</td>
-                      <td className="px-3 py-2.5">
-                        {c.rating ? (
-                          <div className="flex items-center gap-1.5">
-                            <Stars value={c.rating} />
-                            <span className="font-mono text-[11px]">{c.rating.toFixed(1)}</span>
-                          </div>
-                        ) : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {c.compliance ? (
-                          <span className={cn("font-mono text-[12px] font-medium", cv)}>{c.compliance}%</span>
-                        ) : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5"><StatusBadge status={c.status} /></td>
-                      <td className="px-2 py-2.5">
-                        <button className="w-7 h-7 grid place-items-center rounded text-muted-foreground hover:bg-muted transition-colors">
-                          <MoreHorizontal size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex items-center justify-between px-4 py-2.5 border-t border-border text-[12px] text-muted-foreground">
-            <span>Showing <b className="text-foreground">{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, rows.length)}</b> of <b className="text-foreground">{rows.length}</b></span>
-            <div className="flex items-center gap-2">
-              <button className={cn("w-7 h-7 grid place-items-center rounded border border-border hover:bg-muted transition-colors", page === 1 && "opacity-40 pointer-events-none")} onClick={() => setPage(p => p - 1)}>
-                <ChevronLeft size={13} />
-              </button>
-              <span className="font-mono text-[11.5px]">{page} / {totalPages}</span>
-              <button className={cn("w-7 h-7 grid place-items-center rounded border border-border hover:bg-muted transition-colors", page >= totalPages && "opacity-40 pointer-events-none")} onClick={() => setPage(p => p + 1)}>
-                <ChevronRight size={13} />
-              </button>
-            </div>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-[#7999b9]">Showing {sortedVendors.length === 0 ? 0 : (safeCurrentPage - 1) * rowsPerPage + 1} {' '}-{' '} {Math.min(safeCurrentPage * rowsPerPage, sortedVendors.length)} of {sortedVendors.length}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[#7999b9]">Rows per page</span>
+          <select value={String(rowsPerPage)} onChange={(e) => setRowsPerPage(Number(e.target.value))} className="h-8 w-24 rounded border border-[#d4dce8] bg-white px-2 text-sm text-[#1f3a61] focus:outline-none focus:ring-2 focus:ring-[#334a76] dark:border-[#334a76] dark:bg-[#1a3050] dark:text-[#c5d5e4]">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage <= 1}>Previous</Button>
+          <span className="min-w-16 text-center text-xs text-[#7999b9]">Page {safeCurrentPage} / {totalPages}</span>
+          <Button variant="outline" size="sm" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage >= totalPages}>Next</Button>
         </div>
       </div>
     </div>
-  );
+  )
 }
+
+export default VendorVerificationTable

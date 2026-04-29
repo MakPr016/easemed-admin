@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard, Users, ShoppingBag, Store, CheckSquare,
   MessageSquare, ScrollText, Settings, LogOut, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
-import { CLIENTS, CONVERSATIONS, CURRENT_ADMIN } from "@/lib/data";
+import { CURRENT_ADMIN } from "@/lib/data";
+import { loadOverview } from "@/lib/admin-data";
 import { cn } from "@/lib/utils";
 
 interface NavItemProps {
@@ -27,11 +28,11 @@ function NavItem({ href, icon, label, badge, active, sub }: NavItemProps) {
         "flex items-center gap-2.5 px-2.5 py-1.5 rounded text-[13px] font-medium relative transition-colors",
         sub && "pl-8 text-[12.5px] font-normal",
         active
-          ? "bg-accent text-accent-foreground before:absolute before:left-[-8px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-primary before:rounded-r"
+          ? "bg-accent text-accent-foreground before:absolute before:-left-2 before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-primary before:rounded-r"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
     >
-      {icon && <span className="w-[15px] h-[15px] shrink-0">{icon}</span>}
+      {icon && <span className="w-3.75 h-3.75 shrink-0">{icon}</span>}
       <span className="flex-1">{label}</span>
       {badge != null && badge > 0 && (
         <span className="ml-auto text-[10.5px] font-mono px-1.5 py-px rounded-full bg-primary text-primary-foreground font-semibold">
@@ -45,9 +46,29 @@ function NavItem({ href, icon, label, badge, active, sub }: NavItemProps) {
 export function Sidebar() {
   const pathname = usePathname();
   const [clientsOpen, setClientsOpen] = useState(true);
+  const [unread, setUnread] = useState(0);
+  const [pending, setPending] = useState(0);
 
-  const unread = CONVERSATIONS.filter(c => !c.readByAdmin).length;
-  const pending = CLIENTS.filter(c => c.status === "pending").length;
+  useEffect(() => {
+    let alive = true;
+
+    loadOverview()
+      .then((overview) => {
+        if (!alive) return;
+
+        setPending(overview.pendingHospitals + overview.pendingVendors);
+        setUnread(overview.recentSignups.length);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setPending(0);
+        setUnread(0);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const isClients = pathname.startsWith("/clients");
 
@@ -58,7 +79,7 @@ export function Sidebar() {
     >
       {/* Brand */}
       <div className="flex items-center gap-2.5 px-4 border-b border-border font-semibold tracking-tight" style={{ height: "var(--topbar-h)" }}>
-        <div className="w-[22px] h-[22px] rounded-[5px] bg-primary grid place-items-center text-primary-foreground text-[11px] font-bold shadow-sm shrink-0">
+        <div className="w-5.5 h-5.5 rounded-[5px] bg-primary grid place-items-center text-primary-foreground text-[11px] font-bold shadow-sm shrink-0">
           E
         </div>
         <span className="text-sm">Easemed <small className="text-muted-foreground font-normal text-[11px] ml-1">Admin</small></span>
@@ -102,7 +123,7 @@ export function Sidebar() {
           <p className="text-[12.5px] font-medium truncate">{CURRENT_ADMIN.name}</p>
           <p className="text-[11px] text-muted-foreground">{CURRENT_ADMIN.role}</p>
         </div>
-        <button className="w-[30px] h-[30px] grid place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="Log out">
+        <button className="w-7.5 h-7.5 grid place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="Log out">
           <LogOut size={14} />
         </button>
       </div>
